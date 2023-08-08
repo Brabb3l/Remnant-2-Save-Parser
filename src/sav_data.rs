@@ -207,7 +207,6 @@ pub struct UObject {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UObjectLoadedData {
-    pub unk0: u32,
     pub name: FName,
     pub outer_id: u32,
 }
@@ -226,13 +225,11 @@ impl UObject {
         };
 
         let loaded_data = if !was_loaded {
-            let unk0 = reader.read_u32::<LittleEndian>()?;
             let object_name = sav_data.read_name(reader)?;
             let outer_id = reader.read_u32::<LittleEndian>()?;
 
             Some(
                 UObjectLoadedData {
-                    unk0,
                     name: object_name,
                     outer_id,
                 }
