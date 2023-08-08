@@ -4,9 +4,40 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 use crate::io::{Readable, Reader};
 
+const ARCHIVE_V2_HEADER_TAG: u64 = 0x22222222_9E2A83C1;
+
+#[derive(Debug)]
+pub enum Compressor {
+    Custom(String),
+    None,
+    Oodle,
+    Zlib,
+    Gzip,
+    LZ4,
+}
+
+impl Readable for Compressor {
+    fn read(reader: &mut Reader) -> anyhow::Result<Self> {
+        let compressor = match reader.read_u8()? {
+            0 => bail!("Custom compressor"),
+            1 => Compressor::None,
+            2 => Compressor::Oodle,
+            3 => Compressor::Zlib,
+            4 => Compressor::Gzip,
+            5 => Compressor::LZ4,
+            _ => bail!("Unknown compressor"),
+        };
+
+        Ok(compressor)
+    }
+}
+
 #[derive(Debug)]
 pub struct SavFile {
-    pub unknown: u64,
+    // crc32 of the uncompressed data with content_size and version prepended and
+    // the first 4 bytes of the uncompressed data need to be removed
+    pub crc32: u32,
+    pub content_size: u32, // uncompressed size + 8
     pub version: u32,
     pub chunks: Vec<SavChunk>,
 }
@@ -14,7 +45,7 @@ pub struct SavFile {
 impl SavFile {
     pub fn get_uncompressed_size(&self) -> u64 {
         self.chunks.iter()
-            .map(|chunk| chunk.uncompressed_size)
+            .map(|chunk| chunk.compression_info.uncompressed_size)
             .sum()
     }
 }
@@ -35,8 +66,9 @@ impl SavFile {
 impl Readable for SavFile {
     fn read(reader: &mut Reader) -> anyhow::Result<Self> {
         let size = reader.get_ref().len() as u64;
-        
-        let unknown = reader.read_u64::<LittleEndian>()?;
+
+        let crc32 = reader.read_u32::<LittleEndian>()?;
+        let content_size = reader.read_u32::<LittleEndian>()?;
         let version = reader.read_u32::<LittleEndian>()?;
         
         let mut chunks = Vec::new();
@@ -46,7 +78,8 @@ impl Readable for SavFile {
         }
 
         let sav_file = SavFile {
-            unknown,
+            crc32,
+            content_size,
             version,
             chunks,
         };
@@ -56,47 +89,54 @@ impl Readable for SavFile {
 }
 
 #[derive(Debug)]
-pub struct SavChunk {
-    pub magic: u32,
-    pub unknown: u32,
-    pub uncompressed_block_size: u64,
-    pub unknown2: u8,
+pub struct FCompressedChunkInfo {
     pub compressed_size: u64,
     pub uncompressed_size: u64,
-    pub compressed_size_2: u64,
-    pub uncompressed_size_2: u64,
+}
+
+impl Readable for FCompressedChunkInfo {
+    fn read(reader: &mut Reader) -> anyhow::Result<Self> {
+        let compressed_size = reader.read_u64::<LittleEndian>()?;
+        let uncompressed_size = reader.read_u64::<LittleEndian>()?;
+
+        let compression_info = FCompressedChunkInfo {
+            compressed_size,
+            uncompressed_size,
+        };
+
+        Ok(compression_info)
+    }
+}
+
+#[derive(Debug)]
+pub struct SavChunk {
+    pub package_file_tag: u64,
+    pub compressor: Compressor,
+    pub compression_info: FCompressedChunkInfo,
     pub compressed_data: Vec<u8>,
 }
 
 impl Readable for SavChunk {
     fn read(reader: &mut Reader) -> anyhow::Result<Self> {
-        let magic = reader.read_u32::<LittleEndian>()?;
+        let package_file_tag = reader.read_u64::<LittleEndian>()?;
 
-        if magic != 0x9E2A83C1 {
-            bail!("Invalid magic number: 0x{:X}", magic);
+        if package_file_tag != ARCHIVE_V2_HEADER_TAG {
+            bail!("Unsupported package file tag: {}", package_file_tag);
         }
 
-        let unknown = reader.read_u32::<LittleEndian>()?;
-        let uncompressed_block_size = reader.read_u64::<LittleEndian>()?;
-        let unknown2 = reader.read_u8()?;
-        let compressed_size = reader.read_u64::<LittleEndian>()?;
-        let uncompressed_size = reader.read_u64::<LittleEndian>()?;
-        let compressed_size_2 = reader.read_u64::<LittleEndian>()?;
-        let uncompressed_size_2 = reader.read_u64::<LittleEndian>()?;
+        let _uncompressed_size = reader.read_u64::<LittleEndian>()?; // can be ignored
+        let compressor = Compressor::read(reader)?;
+        let compression_info = FCompressedChunkInfo::read(reader)?;
+        let _compression_info_2 = FCompressedChunkInfo::read(reader)?; // can be ignored
 
-        let mut data = vec![0u8; compressed_size as usize];
+        let mut data = vec![0u8; compression_info.compressed_size as usize];
 
         reader.read_exact(&mut data)?;
 
         let sav_chunk = SavChunk {
-            magic,
-            unknown,
-            uncompressed_block_size,
-            unknown2,
-            compressed_size,
-            uncompressed_size,
-            compressed_size_2,
-            uncompressed_size_2,
+            package_file_tag,
+            compressor,
+            compression_info,
             compressed_data: data,
         };
 

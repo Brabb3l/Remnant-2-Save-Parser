@@ -6,10 +6,10 @@ use crate::properties::Property;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SavHeader {
-    pub size: u32,
-    pub unk0: u32, // maybe some user id
-    pub unk1: u32,
-    pub unk2: u32,
+    pub uncompressed_size: u32,
+    pub build_number: u32,
+    pub ue4_version: u32,
+    pub ue5_version: u32,
     pub class_path: String,
     pub class_name: String,
     pub names_offset: u32,
@@ -24,10 +24,10 @@ pub struct SavHeader {
 
 impl Readable for SavHeader {
     fn read(reader: &mut Reader) -> anyhow::Result<Self> {
-        let size = reader.read_u32::<LittleEndian>()?;
-        let unk0 = reader.read_u32::<LittleEndian>()?;
-        let unk1 = reader.read_u32::<LittleEndian>()?;
-        let unk2 = reader.read_u32::<LittleEndian>()?;
+        let uncompressed_size = reader.read_u32::<LittleEndian>()?;
+        let build_number = reader.read_u32::<LittleEndian>()?;
+        let ue4_version = reader.read_u32::<LittleEndian>()?;
+        let ue5_version = reader.read_u32::<LittleEndian>()?;
         let class_path = reader.read_length_prefixed_cstring()?;
         let class_name = reader.read_length_prefixed_cstring()?;
         let names_offset = reader.read_u32::<LittleEndian>()?;
@@ -40,10 +40,10 @@ impl Readable for SavHeader {
         let name_table = SavNameTable::read(reader, names_offset - 8, class_names_offset - 8)?;
 
         Ok(SavHeader {
-            size,
-            unk0,
-            unk1,
-            unk2,
+            uncompressed_size,
+            build_number,
+            ue4_version,
+            ue5_version,
             class_path,
             class_name,
             names_offset,
@@ -96,7 +96,7 @@ impl SavNameTable {
             let length = reader.read_u32::<LittleEndian>()?;
 
             if length > 0 {
-                let properties = Property::read_multiple(reader, &self)?;
+                let properties = Property::read_multiple(reader, self)?;
 
                 reader.read_u32::<LittleEndian>()?;
 
