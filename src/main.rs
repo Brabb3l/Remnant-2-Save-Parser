@@ -1,13 +1,13 @@
 use std::fs;
 use io::Reader;
-use crate::io::Readable;
 use crate::sav::SavFile;
-use crate::sav_data::SavData;
+use crate::sav_data::{SaveGameArchive};
 
 mod io;
 mod sav;
 mod sav_data;
 mod properties;
+mod structs;
 
 fn main() -> anyhow::Result<()> {
     parse_all_in(".")?;
@@ -43,7 +43,7 @@ fn parse(path: &str) -> anyhow::Result<()> {
     let sav_file = SavFile::read(&mut reader)?;
     let sav_file_content = sav_file.get_content()?;
 
-    let sav_data = SavData::read(&mut Reader::new(sav_file_content))?;
+    let sav_data = SaveGameArchive::read(&mut Reader::new(sav_file_content))?;
 
     fs::write(format!("{}.json", path), serde_json::to_vec_pretty(&sav_data)?)?;
 

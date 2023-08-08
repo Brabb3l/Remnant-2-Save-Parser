@@ -4,12 +4,8 @@ use byteorder::{LittleEndian, ReadBytesExt};
 
 pub type Reader = Cursor<Vec<u8>>;
 
-pub trait Readable {
-    fn read(reader: &mut Reader) -> anyhow::Result<Self> where Self: Sized;
-}
-
 pub trait ReaderExt: Read {
-    fn read_length_prefixed_cstring(&mut self) -> anyhow::Result<String> {
+    fn read_fstring(&mut self) -> anyhow::Result<String> {
         let length = self.read_u32::<LittleEndian>()?;
 
         if length == 0 {
