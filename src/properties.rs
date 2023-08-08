@@ -75,7 +75,14 @@ pub enum PropertyData {
         enum_name: String,
         value: String,
     },
-    Int(i32),
+    Int16(i16),
+    Int32(i32),
+    Int64(i64),
+    UInt16(u16),
+    UInt32(u32),
+    UInt64(u64),
+    Float(f32),
+    Double(f64),
     Map {
         key_type: String,
         value_type: String,
@@ -98,12 +105,10 @@ pub enum PropertyData {
         data: StructData,
     },
     Str(String),
-    Float(f32),
     StructReference { // for map keys
         guid: FGuid,
     },
     Text(u32, TextPropertyData),
-    UInt64(u64),
 }
 
 pub struct PropertyParser;
@@ -114,7 +119,14 @@ impl PropertyParser {
             "ByteProperty" => Box::new(BytePropertyParser),
             "BoolProperty" => Box::new(BoolPropertyParser),
             "EnumProperty" => Box::new(EnumPropertyParser),
+            "Int16Property" => Box::new(Int16PropertyParser),
             "IntProperty" => Box::new(IntPropertyParser),
+            "Int64Property" => Box::new(Int64PropertyParser),
+            "UInt16Property" => Box::new(UInt16PropertyParser),
+            "UInt32Property" => Box::new(UInt32PropertyParser),
+            "UInt64Property" => Box::new(UInt64PropertyParser),
+            "FloatProperty" => Box::new(FloatPropertyParser),
+            "DoubleProperty" => Box::new(DoublePropertyParser),
             "MapProperty" => Box::new(MapPropertyParser),
             "ArrayProperty" => Box::new(ArrayPropertyParser),
             "NameProperty" => Box::new(NamePropertyParser),
@@ -130,9 +142,7 @@ impl PropertyParser {
                 })
             },
             "StrProperty" => Box::new(StrPropertyParser),
-            "FloatProperty" => Box::new(FloatPropertyParser),
             "TextProperty" => Box::new(TextPropertyParser),
-            "UInt64Property" => Box::new(UInt64PropertyParser),
             _ => bail!("Unknown property type: {} at {}", name, reader.position()),
         };
 
@@ -256,9 +266,14 @@ macro_rules! impl_primitive_parser {
     };
 }
 
-impl_primitive_parser!(IntPropertyParser, read_i32, Int);
+impl_primitive_parser!(Int16PropertyParser, read_i16, Int16);
+impl_primitive_parser!(IntPropertyParser, read_i32, Int32);
+impl_primitive_parser!(Int64PropertyParser, read_i64, Int64);
+impl_primitive_parser!(UInt16PropertyParser, read_u16, UInt16);
+impl_primitive_parser!(UInt32PropertyParser, read_u32, UInt32);
 impl_primitive_parser!(UInt64PropertyParser, read_u64, UInt64);
 impl_primitive_parser!(FloatPropertyParser, read_f32, Float);
+impl_primitive_parser!(DoublePropertyParser, read_f64, Double);
 
 pub struct MapPropertyParser;
 
@@ -464,6 +479,13 @@ impl StructPropertyParser {
                     value,
                 }
             }
+            "SoftObjectPath" => {
+                let value = reader.read_length_prefixed_cstring()?;
+
+                StructData::SoftObjectPath {
+                    value,
+                }
+            }
             "PersistenceBlob" => {
                 let mut value = vec![0; size as usize];
 
@@ -473,43 +495,103 @@ impl StructPropertyParser {
 
                 let size = reader.read_u32::<LittleEndian>()?;
                 let unk0 = reader.read_u32::<LittleEndian>()?;
-                let unk1 = reader.read_u32::<LittleEndian>()?;
-                let names_offset = reader.read_u32::<LittleEndian>()?;
-                let unk2 = reader.read_u32::<LittleEndian>()?;
-                let unk3 = reader.read_u32::<LittleEndian>()?;
-                let class_names_offset = reader.read_u32::<LittleEndian>()?;
-                let unk4 = reader.read_u32::<LittleEndian>()?;
 
-                let mut name_table = SavNameTable::read(reader, names_offset + 4, class_names_offset + 4)?;
+                if unk0 == 4 { // disambiguate between save and profile version like this for now
+                    // parse save version
 
-                let first_object = PersistenceBlobObject::read_object(reader, &name_table)?;
-                let flag = reader.read_u8()?;
-                let object_count = reader.read_u32::<LittleEndian>()?;
+                    let unk1 = reader.read_u32::<LittleEndian>()?; // some size or offset?
+                    let unk2 = reader.read_u32::<LittleEndian>()?; // some size or offset?
+                    let unk3 = reader.read_u32::<LittleEndian>()?;
+                    let names_offset = reader.read_u32::<LittleEndian>()?;
+                    let unk4 = reader.read_u32::<LittleEndian>()?;
+                    let unk5 = reader.read_u32::<LittleEndian>()?;
+                    let class_names_offset = reader.read_u32::<LittleEndian>()?;
+                    let unk6 = reader.read_u32::<LittleEndian>()?;
+                    let unk7 = reader.read_u32::<LittleEndian>()?;
+                    let first_obj_size = reader.read_u32::<LittleEndian>()?;
 
-                let mut objects = Vec::new();
+                    let mut name_table = SavNameTable::read(reader, names_offset + 16, class_names_offset + 16)?;
+                    let first_obj_properties = Property::read_multiple(reader, &name_table)?;
 
-                for _ in 0..object_count {
-                    let object = PersistenceBlobObject::read_object(reader, &name_table)?;
+                    reader.read_u64::<LittleEndian>()?;
+                    reader.read_u8()?;
 
-                    objects.push(object);
-                }
+                    let object_count = reader.read_u32::<LittleEndian>()?;
+                    let mut objects = Vec::new();
 
-                name_table.read_additional_class_data(reader)?;
+                    objects.push(
+                        PersistenceBlobObject {
+                            name: "".to_owned(),
+                            size: first_obj_size,
+                            properties: first_obj_properties,
+                        }
+                    );
 
-                StructData::PersistenceBlob {
-                    size,
-                    unk0,
-                    unk1,
-                    names_offset,
-                    unk2,
-                    unk3,
-                    class_names_offset,
-                    unk4,
-                    first_object,
-                    flag,
-                    object_count,
-                    objects,
-                    name_table,
+                    for _ in 0..object_count {
+                        let object = PersistenceBlobObject::read_object(reader, &name_table)?;
+
+                        objects.push(object);
+                    }
+
+                    name_table.read_additional_class_data(reader)?;
+
+                    StructData::PersistenceBlob2 {
+                        size,
+                        unk0,
+                        unk1,
+                        unk2,
+                        unk3,
+                        names_offset,
+                        unk4,
+                        unk5,
+                        class_names_offset,
+                        unk6,
+                        unk7,
+                        objects,
+                        name_table,
+                    }
+                } else {
+                    // parse profile version
+
+                    let unk1 = reader.read_u32::<LittleEndian>()?;
+                    let names_offset = reader.read_u32::<LittleEndian>()?;
+                    let unk2 = reader.read_u32::<LittleEndian>()?;
+                    let unk3 = reader.read_u32::<LittleEndian>()?;
+                    let class_names_offset = reader.read_u32::<LittleEndian>()?;
+                    let unk4 = reader.read_u32::<LittleEndian>()?;
+
+                    let mut name_table = SavNameTable::read(reader, names_offset + 4, class_names_offset + 4)?;
+
+                    let first_object = PersistenceBlobObject::read_object(reader, &name_table)?;
+                    let flag = reader.read_u8()?;
+                    let object_count = reader.read_u32::<LittleEndian>()?;
+
+                    let mut objects = Vec::new();
+
+                    objects.push(first_object);
+
+                    for _ in 0..object_count {
+                        let object = PersistenceBlobObject::read_object(reader, &name_table)?;
+
+                        objects.push(object);
+                    }
+
+                    name_table.read_additional_class_data(reader)?;
+
+                    StructData::PersistenceBlob {
+                        size,
+                        unk0,
+                        unk1,
+                        names_offset,
+                        unk2,
+                        unk3,
+                        class_names_offset,
+                        unk4,
+                        flag,
+                        object_count,
+                        objects,
+                        name_table,
+                    }
                 }
             }
             "Guid" => {
@@ -517,6 +599,24 @@ impl StructPropertyParser {
 
                 StructData::Guid {
                     value,
+                }
+            }
+            "Timespan" => {
+                let value = reader.read_u64::<LittleEndian>()?;
+
+                StructData::Timespan {
+                    value,
+                }
+            }
+            "Vector" => {
+                let x = reader.read_f64::<LittleEndian>()?;
+                let y = reader.read_f64::<LittleEndian>()?;
+                let z = reader.read_f64::<LittleEndian>()?;
+
+                StructData::Vector {
+                    x,
+                    y,
+                    z,
                 }
             }
             _ => {
@@ -537,6 +637,9 @@ pub enum StructData {
     SoftClassPath {
         value: String,
     },
+    SoftObjectPath {
+        value: String,
+    },
     PersistenceBlob {
         size: u32,
         unk0: u32,
@@ -546,14 +649,36 @@ pub enum StructData {
         unk3: u32,
         class_names_offset: u32,
         unk4: u32,
-        first_object: PersistenceBlobObject,
         flag: u8,
         object_count: u32,
         objects: Vec<PersistenceBlobObject>,
         name_table: SavNameTable,
     },
+    PersistenceBlob2 {
+        size: u32,
+        unk0: u32,
+        unk1: u32,
+        unk2: u32,
+        unk3: u32,
+        names_offset: u32,
+        unk4: u32,
+        unk5: u32,
+        class_names_offset: u32,
+        unk6: u32,
+        unk7: u32,
+        objects: Vec<PersistenceBlobObject>,
+        name_table: SavNameTable,
+    },
     Guid {
         value: FGuid,
+    },
+    Timespan {
+        value: u64,
+    },
+    Vector {
+        x: f64,
+        y: f64,
+        z: f64,
     },
     Dynamic {
         properties: Vec<Property>,
@@ -634,6 +759,9 @@ pub enum TextPropertyData {
         namespace: String,
         key: String,
         source_string: String,
+    },
+    None {
+        culture_invariant_string: Option<String>,
     }
 }
 
@@ -664,6 +792,19 @@ impl PropertyReader for TextPropertyParser {
                     namespace,
                     key,
                     source_string,
+                }
+            }
+            255 => { // None
+                let has_culture_invariant_string = reader.read_u32::<LittleEndian>()? != 0;
+
+                let culture_invariant_string = if has_culture_invariant_string {
+                    Some(reader.read_length_prefixed_cstring()?)
+                } else {
+                    None
+                };
+
+                TextPropertyData::None {
+                    culture_invariant_string,
                 }
             }
             _ => bail!("Unsupported history type: {}", history_type),

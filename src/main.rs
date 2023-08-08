@@ -24,7 +24,7 @@ fn parse_all_in(dir: &str) -> anyhow::Result<()> {
 
         if path.is_file() {
             if let Some(extension) = path.extension() {
-                if extension == "sav" && !path.file_name().unwrap().to_str().unwrap().starts_with("save") {
+                if extension == "sav" {
                     parse(path.to_str().unwrap())?;
                 }
             }
