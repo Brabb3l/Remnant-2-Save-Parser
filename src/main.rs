@@ -1,13 +1,13 @@
-use std::fs;
 use io::Reader;
+use std::fs;
+use std::path::PathBuf;
 use crate::sav::SavFile;
-use crate::sav_data::{SaveGameArchive};
 
 mod io;
-mod sav;
-mod sav_data;
 mod properties;
+mod sav;
 mod structs;
+mod components;
 
 fn main() -> anyhow::Result<()> {
     parse_all_in(".")?;
@@ -25,7 +25,9 @@ fn parse_all_in(dir: &str) -> anyhow::Result<()> {
         if path.is_file() {
             if let Some(extension) = path.extension() {
                 if extension == "sav" {
-                    parse(path.to_str().unwrap())?;
+                    println!("Parsing {:?}", path);
+
+                    unpack(&path, ".")?;
                 }
             }
         }
@@ -34,18 +36,28 @@ fn parse_all_in(dir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse(path: &str) -> anyhow::Result<()> {
-    println!("Parsing {}", path);
+fn unpack(input_file: &PathBuf, output_dir: &str) -> anyhow::Result<()> {
+    let file_name = input_file.file_name()
+        .and_then(|x| x.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Invalid file name"))?;
 
-    let buf = fs::read(path)?;
-    let mut reader = Reader::new(buf);
+    // parse binary file
+
+    let input_bytes = fs::read(input_file)?;
+    let mut reader = Reader::new(input_bytes, 4);
 
     let sav_file = SavFile::read(&mut reader)?;
-    let sav_file_content = sav_file.get_content()?;
+    let archive = sav_file.get_archive()?;
 
-    let sav_data = SaveGameArchive::read(&mut Reader::new(sav_file_content))?;
+    let json = serde_json::to_vec_pretty(&archive)?;
 
-    fs::write(format!("{}.json", path), serde_json::to_vec_pretty(&sav_data)?)?;
+    // write json file
+
+    let mut output_file = PathBuf::from(output_dir);
+
+    output_file.push(format!("{}.json", file_name));
+
+    fs::write(output_file, json)?;
 
     Ok(())
 }

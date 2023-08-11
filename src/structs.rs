@@ -1,28 +1,16 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+mod reader;
+mod writer;
+
+use crate::properties::Property;
 use serde::{Deserialize, Serialize};
-use crate::io::Reader;
+use std::collections::HashMap;
+use crate::sav::SaveGameArchiveContent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FVector {
     pub x: f64,
     pub y: f64,
     pub z: f64,
-}
-
-impl FVector {
-    pub fn read(reader: &mut Reader) -> anyhow::Result<Self> {
-        let x = reader.read_f64::<LittleEndian>()?;
-        let y = reader.read_f64::<LittleEndian>()?;
-        let z = reader.read_f64::<LittleEndian>()?;
-
-        let vector = FVector {
-            x,
-            y,
-            z,
-        };
-
-        Ok(vector)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,24 +21,6 @@ pub struct FQuaternion {
     pub z: f64,
 }
 
-impl FQuaternion {
-    pub fn read(reader: &mut Reader) -> anyhow::Result<Self> {
-        let w = reader.read_f64::<LittleEndian>()?;
-        let x = reader.read_f64::<LittleEndian>()?;
-        let y = reader.read_f64::<LittleEndian>()?;
-        let z = reader.read_f64::<LittleEndian>()?;
-
-        let quaternion = FQuaternion {
-            w,
-            x,
-            y,
-            z,
-        };
-
-        Ok(quaternion)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FTransform {
     pub rotation: FQuaternion,
@@ -58,23 +28,7 @@ pub struct FTransform {
     pub scale: FVector,
 }
 
-impl FTransform {
-    pub fn read(reader: &mut Reader) -> anyhow::Result<Self> {
-        let rotation = FQuaternion::read(reader)?;
-        let position = FVector::read(reader)?;
-        let scale = FVector::read(reader)?;
-
-        let transform = FTransform {
-            rotation,
-            position,
-            scale,
-        };
-
-        Ok(transform)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FGuid {
     pub a: u32,
     pub b: u32,
@@ -82,29 +36,97 @@ pub struct FGuid {
     pub d: u32,
 }
 
-impl FGuid {
-    pub fn read(reader: &mut Reader) -> anyhow::Result<FGuid> {
-        let a = reader.read_u32::<LittleEndian>()?;
-        let b = reader.read_u32::<LittleEndian>()?;
-        let c = reader.read_u32::<LittleEndian>()?;
-        let d = reader.read_u32::<LittleEndian>()?;
-
-        Ok(FGuid {
-            a,
-            b,
-            c,
-            d,
-        })
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FTopLevelAssetPath {
+    pub path: String,
+    pub name: String,
 }
 
-impl FGuid {
-    pub fn new() -> FGuid {
-        FGuid {
-            a: 0,
-            b: 0,
-            c: 0,
-            d: 0,
+#[derive(Debug)]
+pub struct FInfo {
+    pub unique_id: u64,
+    pub offset: u32,
+    pub size: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DynamicActor {
+    pub unique_id: u64,
+    pub transform: FTransform,
+    pub class_path: FTopLevelAssetPath,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Actor {
+    pub transform: Option<FTransform>,
+    pub archive: SaveGameArchiveContent,
+    pub dynamic_data: Option<DynamicActor>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PersistenceBlob {
+    pub archive: SaveGameArchiveContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PersistenceContainer {
+    pub version: u32,
+    pub destroyed: Vec<u64>,
+    pub actors: HashMap<u64, Actor>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Timespan {
+    pub value: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DateTime {
+    pub value: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DynamicStruct {
+    pub properties: Vec<Property>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum StructData {
+    SoftClassPath(String),
+    SoftObjectPath(String),
+    PersistenceBlob(PersistenceBlob),
+    PersistenceContainer(PersistenceContainer),
+    Guid(FGuid),
+    Timespan(Timespan),
+    DateTime(DateTime),
+    Vector(FVector),
+    Dynamic(DynamicStruct),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FName {
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    pub number: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FPackageVersion {
+    pub ue4_version: u32,
+    pub ue5_version: u32,
+}
+
+// utility functions
+
+impl FName {
+    pub fn from(name: &str) -> FName {
+        FName {
+            value: name.to_owned(),
+            number: None,
         }
+    }
+
+    pub fn none() -> FName {
+        FName::from("None")
     }
 }
